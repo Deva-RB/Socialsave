@@ -51,7 +51,7 @@ function checkYtDlp() {
 
 function friendlyError(stderr, platform) {
   const s = stderr.toLowerCase();
-  if (s.includes("private")) return `This ${platform} post is private.`;
+  if (s.includes("private")) return `This ${platform} post is private. Only public content can be downloaded.`;
   if (s.includes("login") || s.includes("log in")) return `This ${platform} content requires login. Only public posts work.`;
   if (s.includes("404") || s.includes("not found") || s.includes("no video")) return "Video not found. It may have been deleted.";
   if (s.includes("unsupported url")) return `This ${platform} link type is not supported.`;
@@ -59,7 +59,7 @@ function friendlyError(stderr, platform) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SHARED CSS + JS (used by all pages)
+// SHARED CSS
 // ═══════════════════════════════════════════════════════════════
 const SHARED_CSS = `
 <link href="https://fonts.googleapis.com/css2?family=Clash+Display:wght@500;600;700&family=Satoshi:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
@@ -136,50 +136,94 @@ h1{font-family:'Clash Display',sans-serif;font-size:clamp(28px,6vw,46px);font-we
 @media(max-width:480px){.url-row{flex-direction:column;}.frow{flex-direction:column;align-items:flex-start;gap:8px;}.dl-btn{width:100%;justify-content:center;}.feat-grid{grid-template-columns:1fr;}}
 </style>`;
 
+// ═══════════════════════════════════════════════════════════════
+// SHARED JS — with per-page platform validation
+// ═══════════════════════════════════════════════════════════════
 const SHARED_JS = `
 <script>
 let CUR_URL='';
+
+// Per-page URL validation
+const PLATFORM_CHECKS = {
+  instagram: { regex: /instagram\\.com|instagr\\.am/i, name: 'Instagram' },
+  tiktok:    { regex: /tiktok\\.com/i, name: 'TikTok' },
+  facebook:  { regex: /facebook\\.com|fb\\.watch/i, name: 'Facebook' },
+  pinterest: { regex: /pinterest\\.|pin\\.it/i, name: 'Pinterest' },
+  youtube:   { regex: /youtube\\.com|youtu\\.be/i, name: 'YouTube' },
+  twitter:   { regex: /twitter\\.com|x\\.com/i, name: 'X (Twitter)' },
+};
+
 function setLoad(on){document.querySelector('.loader').classList.toggle('on',on);document.querySelector('.btn').disabled=on;}
 function showErr(m){const e=document.querySelector('.err');e.textContent='⚠ '+m;e.classList.add('on');}
 function clearErr(){document.querySelector('.err').classList.remove('on');}
 function fmtB(b){if(!b)return'';return b>1048576?(b/1048576).toFixed(1)+' MB':(b/1024).toFixed(0)+' KB';}
 function fmtD(s){if(!s)return'';return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+
 async function doFetch(){
   const url=document.getElementById('url').value.trim();
   if(!url)return showErr('Please paste a video link first.');
-  clearErr();document.querySelector('.result').classList.remove('on');
-  CUR_URL=url;setLoad(true);
+
+  // Platform validation — only on dedicated pages not homepage
+  const platform = document.body.dataset.platform;
+  if(platform && platform !== 'home'){
+    const check = PLATFORM_CHECKS[platform];
+    if(check && !check.regex.test(url)){
+      return showErr('This page only accepts ' + check.name + ' links. Please paste a ' + check.name + ' link or use the Universal Downloader on the homepage.');
+    }
+  }
+
+  clearErr();
+  document.querySelector('.result').classList.remove('on');
+  CUR_URL=url;
+  setLoad(true);
   try{
     const r=await fetch('/api/info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
-    const d=await r.json();setLoad(false);
+    const d=await r.json();
+    setLoad(false);
     if(!r.ok)return showErr(d.error||'Could not get video. Make sure the post is public.');
     renderResult(d);
-  }catch{setLoad(false);showErr('Connection error. Please try again.');}
+  }catch{
+    setLoad(false);
+    showErr('Connection error. Please try again.');
+  }
 }
+
 function renderResult(d){
   const tw=document.getElementById('tw');
-  if(d.thumbnail){document.getElementById('timg').src=d.thumbnail;tw.style.display='';}else tw.style.display='none';
+  if(d.thumbnail){document.getElementById('timg').src=d.thumbnail;tw.style.display='';}
+  else tw.style.display='none';
   document.getElementById('vtitle').textContent=d.title||'Video';
-  const st=[];if(d.uploader)st.push('👤 '+d.uploader);if(d.duration)st.push('⏱ '+fmtD(d.duration));if(d.like_count)st.push('❤️ '+d.like_count.toLocaleString());
+  const st=[];
+  if(d.uploader)st.push('👤 '+d.uploader);
+  if(d.duration)st.push('⏱ '+fmtD(d.duration));
+  if(d.like_count)st.push('❤️ '+d.like_count.toLocaleString());
   document.getElementById('vstats').innerHTML=st.map(s=>'<span>'+s+'</span>').join('');
-  const list=document.getElementById('fmts');list.innerHTML='';
+  const list=document.getElementById('fmts');
+  list.innerHTML='';
   const fmts=d.formats&&d.formats.length?d.formats:[{format_id:'best',quality:'Best Quality',ext:'mp4',filesize:null,height:0}];
   fmts.forEach((f,i)=>{
     const lbl=f.height?f.height+'p HD':(f.quality||'Best Quality');
     const sz=fmtB(f.filesize);
     const p=new URLSearchParams({url:CUR_URL,format_id:f.format_id,filename:(d.platform||'video')+'_'+lbl});
-    const row=document.createElement('div');row.className='frow';
-    row.innerHTML='<div class="finfo"><span class="fbadge">'+((f.ext||'mp4').toUpperCase())+'</span><div><div class="fq">'+lbl+(i===0?' ⭐':'')+'</div>'+(sz?'<div class="fs">'+sz+'</div>':'')+'</div></div><a class="dl-btn" href="/api/download?'+p+'" download>↓ Save</a>';
+    const row=document.createElement('div');
+    row.className='frow';
+    row.innerHTML='<div class="finfo"><span class="fbadge">'+((f.ext||'mp4').toUpperCase())+'</span><div><div class="fq">'+lbl+(i===0?' ⭐':'')+'</div>'+(sz?'<div class="fs">'+sz+'</div>':'')+'</div></div><a class="dl-btn" href="/api/download?'+p+'" download>↓ Save Video</a>';
     list.appendChild(row);
   });
   document.querySelector('.result').classList.add('on');
   document.querySelector('.result').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
+
 function faq(el){el.parentElement.classList.toggle('open');}
+
 document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('url').addEventListener('keydown',e=>{if(e.key==='Enter')doFetch();});
   document.getElementById('url').addEventListener('focus',async()=>{
-    try{const t=await navigator.clipboard.readText();const inp=document.getElementById('url');if(!inp.value&&t.startsWith('http'))inp.value=t;}catch{}
+    try{
+      const t=await navigator.clipboard.readText();
+      const inp=document.getElementById('url');
+      if(!inp.value&&t.startsWith('http'))inp.value=t;
+    }catch{}
   });
 });
 </script>`;
@@ -223,7 +267,7 @@ ${SHARED_CSS}
 .p-icon{width:60px;height:60px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:18px;background:var(--grad);box-shadow:0 0 36px var(--focus-s);}
 </style>
 </head>
-<body>
+<body data-platform="${cfg.key}">
 <div class="bg"></div>
 <div class="wrap">
   <a class="back" href="/">← All Platforms</a>
@@ -281,101 +325,101 @@ ${SHARED_JS}
 // ═══════════════════════════════════════════════════════════════
 const PAGE_CONFIGS = {
   instagram: {
-    path: "/instagram", platform: "Instagram",
-    title: "Instagram Video Downloader — Download Reels & Posts Free | SocialSave",
-    desc: "Download Instagram Reels, Posts and IGTV videos for free in HD quality. No login required. Just paste the link.",
-    keywords: "instagram video downloader, download instagram reels, instagram reel downloader, save instagram video, IGTV downloader",
-    icon: "📸", grad: "linear-gradient(135deg,#833ab4,#e1306c,#fcaf45)",
-    acc: "#f06292", focusC: "rgba(225,48,108,0.4)", focusS: "rgba(225,48,108,0.08)",
-    badgeBg: "rgba(225,48,108,0.1)", c1: "rgba(225,48,108,0.1)", c2: "rgba(131,58,180,0.08)",
-    subtitle: "Download Instagram Reels, Posts and IGTV videos in HD quality for free. No account needed — just paste the link.",
-    placeholder: "https://www.instagram.com/reel/...",
-    fieldSub: "Works with Reels, Posts and IGTV links",
-    chips: ["✅ Free","🎬 Reels","🖼 Posts","📺 IGTV","⚡ HD","🔒 No Login"],
-    steps: [["Open Instagram","and find the Reel or Post you want to save."],["Tap the three dots (···)","on the post and select Copy Link."],["Paste the link","in the box above and tap Download."],["Choose quality","and the video saves to your device."]],
-    feats: [["⚡","Fast Downloads","Videos download instantly at full speed."],["🎯","HD Quality","Download up to 1080p HD quality."],["🔒","No Login","No Instagram account required."],["📱","All Devices","Works on Android, iPhone, PC and Mac."]],
-    faqs: [["Can I download Instagram Reels?","Yes! Paste any Reel link and download instantly for free."],["Is it free?","100% free, no limits, no subscription."],["Why can't I download?","Only public Instagram posts can be downloaded. Private accounts are not supported."],["What format?","Videos download as MP4, compatible with all devices."]],
+    key:"instagram", path:"/instagram", platform:"Instagram",
+    title:"Instagram Video Downloader — Download Reels & Posts Free | SocialSave",
+    desc:"Download Instagram Reels, Posts and IGTV videos for free in HD quality. No login required. Just paste the link.",
+    keywords:"instagram video downloader, download instagram reels, instagram reel downloader, save instagram video, IGTV downloader",
+    icon:"📸", grad:"linear-gradient(135deg,#833ab4,#e1306c,#fcaf45)",
+    acc:"#f06292", focusC:"rgba(225,48,108,0.4)", focusS:"rgba(225,48,108,0.08)",
+    badgeBg:"rgba(225,48,108,0.1)", c1:"rgba(225,48,108,0.1)", c2:"rgba(131,58,180,0.08)",
+    subtitle:"Download Instagram Reels, Posts and IGTV videos in HD quality for free. No account needed — just paste the Instagram link.",
+    placeholder:"https://www.instagram.com/reel/...",
+    fieldSub:"Only accepts Instagram links — Reels, Posts and IGTV",
+    chips:["✅ Free","🎬 Reels","🖼 Posts","📺 IGTV","⚡ HD","🔒 No Login"],
+    steps:[["Open Instagram","and find the Reel or Post you want to save."],["Tap the three dots (···)","on the post and select Copy Link."],["Paste the link","in the box above and tap Download."],["Choose quality","and the video saves to your device."]],
+    feats:[["⚡","Fast Downloads","Videos download instantly at full speed."],["🎯","HD Quality","Download up to 1080p HD quality."],["🔒","No Login","No Instagram account required."],["📱","All Devices","Works on Android,
+    faqs:[["Can I download Instagram Reels?","Yes! Paste any Reel link and download instantly for free."],["Is it free?","100% free, no limits, no subscription."],["Why can't I download?","Only public Instagram posts can be downloaded. Private accounts are not supported."],["What format?","Videos download as MP4, compatible with all devices."]],
   },
   tiktok: {
-    path: "/tiktok", platform: "TikTok",
-    title: "TikTok Video Downloader — No Watermark Free HD | SocialSave",
-    desc: "Download TikTok videos without watermark for free in HD quality. No login required. Paste the TikTok link and save instantly.",
-    keywords: "tiktok video downloader, download tiktok without watermark, tiktok downloader free, save tiktok video, tiktok no watermark",
-    icon: "🎵", grad: "linear-gradient(135deg,#010101,#69c9d0)",
-    acc: "#69c9d0", focusC: "rgba(105,201,208,0.4)", focusS: "rgba(105,201,208,0.08)",
-    badgeBg: "rgba(105,201,208,0.1)", c1: "rgba(105,201,208,0.08)", c2: "rgba(105,201,208,0.04)",
-    subtitle: "Download TikTok videos without watermark in HD quality for free. No account needed — paste the link and save in seconds.",
-   placeholder: "https://www.tiktok.com/@user/video/...",
-    fieldSub: "Works with TikTok video links from the app or browser",
-    chips: ["✅ Free","🚫 No Watermark","⚡ HD Quality","🔒 No Login","📱 All Devices"],
-    steps: [["Open TikTok","and find the video you want to download."],["Tap Share","and select Copy Link."],["Paste the link","in the box above and tap Download."],["Save the video","clean, no watermark, straight to your device."]],
-    feats: [["🚫","No Watermark","Clean downloads with no TikTok branding."],["⚡","Instant","Videos ready in seconds."],["🎯","HD Quality","Best available quality every time."],["📱","Any Device","Works on any browser, any device."]],
-    faqs: [["Can I download without watermark?","Yes! All downloads are completely watermark-free."],["Is it free?","100% free with no limits or sign-up."],["Can I download private videos?","Only public TikTok videos can be downloaded."],["What format?","Videos save as MP4, compatible with all devices."]],
+    key:"tiktok", path:"/tiktok", platform:"TikTok",
+    title:"TikTok Video Downloader — No Watermark Free HD | SocialSave",
+    desc:"Download TikTok videos without watermark for free in HD quality. No login required. Paste the TikTok link and save instantly.",
+    keywords:"tiktok video downloader, download tiktok without watermark, tiktok downloader free, save tiktok video, tiktok no watermark",
+    icon:"🎵", grad:"linear-gradient(135deg,#010101,#69c9d0)",
+    acc:"#69c9d0", focusC:"rgba(105,201,208,0.4)", focusS:"rgba(105,201,208,0.08)",
+    badgeBg:"rgba(105,201,208,0.1)", c1:"rgba(105,201,208,0.08)", c2:"rgba(105,201,208,0.04)",
+    subtitle:"Download TikTok videos without watermark in HD quality for free. No account needed — paste the TikTok link and save.",
+    placeholder:"https://www.tiktok.com/@user/video/...",
+    fieldSub:"Only accepts TikTok links from the app or browser",
+    chips:["✅ Free","🚫 No Watermark","⚡ HD Quality","🔒 No Login","📱 All Devices"],
+    steps:[["Open TikTok","and find the video you want to download."],["Tap Share","and select Copy Link."],["Paste the link","in the box above and tap Download."],["Save the video","clean, no watermark, straight to your device."]],
+    feats:[["🚫","No Watermark","Clean downloads with no TikTok branding."],["⚡","Instant","Videos ready in seconds."],["🎯","HD Quality","Best available quality every time."],["📱","Any Device","Works on any browser, any device."]],
+    faqs:[["Can I download without watermark?","Yes! All downloads are completely watermark-free."],["Is it free?","100% free with no limits or sign-up."],["Can I download private videos?","Only public TikTok videos can be downloaded."],["What format?","Videos save as MP4, compatible with all devices."]],
   },
   facebook: {
-    path: "/facebook", platform: "Facebook",
-    title: "Facebook Video Downloader — Download Facebook Videos Free HD | SocialSave",
-    desc: "Download Facebook videos in HD and SD quality for free. No login required. Save any public Facebook video by pasting the link.",
-    keywords: "facebook video downloader, download facebook video, facebook video saver, save facebook video, fb video downloader",
-    icon: "📘", grad: "linear-gradient(135deg,#1877f2,#0a4fa3)",
-    acc: "#60a5fa", focusC: "rgba(24,119,242,0.4)", focusS: "rgba(24,119,242,0.08)",
-    badgeBg: "rgba(24,119,242,0.1)", c1: "rgba(24,119,242,0.08)", c2: "rgba(24,119,242,0.04)",
-    subtitle: "Download public Facebook videos in HD and SD quality for free. No account needed — paste the video link and save it.",
-    placeholder: "https://www.facebook.com/watch?v=...",
-    fieldSub: "Works with Facebook Watch, video posts and fb.watch links",
-    chips: ["✅ Free","📹 HD & SD","⚡ Fast","🔒 No Login","📱 All Devices"],
-    steps: [["Open Facebook","and find the video you want to download."],["Click the three dots (···)","on the video and select Copy Link."],["Paste the link","in the box above and tap Download."],["Choose HD or SD","and the video saves to your device."]],
-    feats: [["📹","HD & SD","Choose between high and standard definition."],["⚡","Fast & Free","No waiting, no limits."],["🔒","No Account","No Facebook login needed."],["📱","Everywhere","Works on all browsers and devices."]],
-    faqs: [["Can I download any Facebook video?","Any public Facebook video can be downloaded. Private videos are not supported."],["Is it free?","Yes, 100% free with no limits."],["What quality options?","HD and SD depending on the original video."],["Do I need Facebook account?","No login or account required."]],
+    key:"facebook", path:"/facebook", platform:"Facebook",
+    title:"Facebook Video Downloader — Download Facebook Videos Free HD | SocialSave",
+    desc:"Download Facebook videos in HD and SD quality for free. No login required. Save any public Facebook video by pasting the link.",
+    keywords:"facebook video downloader, download facebook video, facebook video saver, save facebook video, fb video downloader",
+    icon:"📘", grad:"linear-gradient(135deg,#1877f2,#0a4fa3)",
+    acc:"#60a5fa", focusC:"rgba(24,119,242,0.4)", focusS:"rgba(24,119,242,0.08)",
+    badgeBg:"rgba(24,119,242,0.1)", c1:"rgba(24,119,242,0.08)", c2:"rgba(24,119,242,0.04)",
+    subtitle:"Download public Facebook videos in HD and SD quality for free. No account needed — paste the Facebook video link.",
+    placeholder:"https://www.facebook.com/watch?v=...",
+    fieldSub:"Only accepts Facebook links — Watch, video posts and fb.watch",
+    chips:["✅ Free","📹 HD & SD","⚡ Fast","🔒 No Login","📱 All Devices"],
+    steps:[["Open Facebook","and find the video you want to download."],["Click the three dots (···)","on the video and select Copy Link."],["Paste the link","in the box above and tap Download."],["Choose HD or SD","and the video saves to your device."]],
+    feats:[["📹","HD & SD","Choose between high and standard definition."],["⚡","Fast & Free","No waiting, no limits."],["🔒","No Account","No Facebook login needed."],["📱","Everywhere","Works on all browsers and devices."]],
+    faqs:[["Can I download any Facebook video?","Any public Facebook video can be downloaded. Private videos are not supported."],["Is it free?","Yes, 100% free with no limits."],["What quality options?","HD and SD depending on the original video."],["Do I need Facebook account?","No login or account required."]],
   },
   pinterest: {
-    path: "/pinterest", platform: "Pinterest",
-    title: "Pinterest Video Downloader — Download Pinterest Videos & GIFs Free | SocialSave",
-    desc: "Download Pinterest videos and GIFs for free in HD quality. No login required. Save any Pinterest video pin by pasting the link.",
-    keywords: "pinterest video downloader, download pinterest video, pinterest video saver, save pinterest video, pinterest gif downloader",
-    icon: "📌", grad: "linear-gradient(135deg,#e60023,#ad081b)",
-    acc: "#f87171", focusC: "rgba(230,0,35,0.4)", focusS: "rgba(230,0,35,0.08)",
-    badgeBg: "rgba(230,0,35,0.1)", c1: "rgba(230,0,35,0.08)", c2: "rgba(173,8,27,0.05)",
-    subtitle: "Download Pinterest video pins and GIFs in HD quality for free. No account needed — paste any Pinterest video link.",
-    placeholder: "https://www.pinterest.com/pin/...",
-    fieldSub: "Works with Pinterest video pins and pin.it short links",
-    chips: ["✅ Free","🎞 Video Pins","🎨 GIFs","⚡ HD","🔒 No Login"],
-    steps: [["Open Pinterest","and find the video pin you want."],["Tap Share","and select Copy Link."],["Paste the link","in the box above and tap Download."],["Save the video","in HD quality to your device."]],
-    feats: [["📌","Video Pins & GIFs","Download video pins and animated GIFs."],["⚡","Instant","Ready to save in seconds."],["🎯","HD Quality","Best quality from the original pin."],["📱","All Devices","Phone, tablet or desktop."]],
-    faqs: [["Can I download GIFs?","Yes! GIFs are supported and save as MP4 files."],["Is it free?","Completely free, no account needed."],["Why can't I download a pin?","Only video pins work. Image-only pins have nothing to download."],["Do I need a Pinterest account?","No account or login required."]],
+    key:"pinterest", path:"/pinterest", platform:"Pinterest",
+    title:"Pinterest Video Downloader — Download Pinterest Videos & GIFs Free | SocialSave",
+    desc:"Download Pinterest videos and GIFs for free in HD quality. No login required. Save any Pinterest video pin by pasting the link.",
+    keywords:"pinterest video downloader, download pinterest video, pinterest video saver, save pinterest video, pinterest gif downloader",
+    icon:"📌", grad:"linear-gradient(135deg,#e60023,#ad081b)",
+    acc:"#f87171", focusC:"rgba(230,0,35,0.4)", focusS:"rgba(230,0,35,0.08)",
+    badgeBg:"rgba(230,0,35,0.1)", c1:"rgba(230,0,35,0.08)", c2:"rgba(173,8,27,0.05)",
+    subtitle:"Download Pinterest video pins and GIFs in HD quality for free. No account needed — paste any Pinterest video link.",
+    placeholder:"https://www.pinterest.com/pin/...",
+    fieldSub:"Only accepts Pinterest links — video pins and pin.it short links",
+    chips:["✅ Free","🎞 Video Pins","🎨 GIFs","⚡ HD","🔒 No Login"],
+    steps:[["Open Pinterest","and find the video pin you want."],["Tap Share","and select Copy Link."],["Paste the link","in the box above and tap Download."],["Save the video","in HD quality to your device."]],
+    feats:[["📌","Video Pins & GIFs","Download video pins and animated GIFs."],["⚡","Instant","Ready to save in seconds."],["🎯","HD Quality","Best quality from the original pin."],["📱","All Devices","Phone, tablet or desktop."]],
+    faqs:[["Can I download GIFs?","Yes! GIFs are supported and save as MP4 files."],["Is it free?","Completely free, no account needed."],["Why can't I download a pin?","Only video pins work. Image-only pins have nothing to download."],["Do I need a Pinterest account?","No account or login required."]],
   },
   youtube: {
-    path: "/youtube", platform: "YouTube",
-    title: "YouTube Video Downloader — Download YouTube Videos & Shorts Free | SocialSave",
-    desc: "Download YouTube videos and Shorts for free in HD, Full HD and 4K. No login required. Fast YouTube to MP4 downloader.",
-    keywords: "youtube video downloader, download youtube video, youtube to mp4, youtube downloader free, youtube shorts downloader, 4k youtube",
-    icon: "▶️", grad: "linear-gradient(135deg,#ff0000,#c4302b)",
-    acc: "#fca5a5", focusC: "rgba(255,0,0,0.4)", focusS: "rgba(255,0,0,0.08)",
-    badgeBg: "rgba(255,0,0,0.1)", c1: "rgba(255,0,0,0.08)", c2: "rgba(196,48,43,0.05)",
-    subtitle: "Download YouTube videos and Shorts in HD, Full HD and 4K for free. No account needed — paste the link and save.",
-    placeholder: "https://www.youtube.com/watch?v=...",
-    fieldSub: "Works with YouTube videos, Shorts and youtu.be links",
-    chips: ["✅ Free","🎬 Videos","📱 Shorts","4K Quality","⚡ HD","🔒 No Login"],
-    steps: [["Open YouTube","and find the video or Short you want."],["Tap Share","and select Copy Link."],["Paste the link","in the box above and tap Download."],["Choose quality","up to 4K and save to your device."]],
-    feats: [["🎯","Up to 4K","HD, Full HD or 4K quality."],["📱","Shorts Supported","YouTube Shorts fully supported."],["⚡","Fast","High speed, no queue."],["🔒","No Account","No Google login required."]],
-    faqs: [["Can I download Shorts?","Yes! YouTube Shorts are fully supported."],["Max quality?","Up to 4K depending on the original video."],["Is it free?","100% free, no limits."],["Do I need Google account?","No account needed at any point."]],
+    key:"youtube", path:"/youtube", platform:"YouTube",
+    title:"YouTube Video Downloader — Download YouTube Videos & Shorts Free | SocialSave",
+    desc:"Download YouTube videos and Shorts for free in HD, Full HD and 4K. No login required. Fast YouTube to MP4 downloader.",
+    keywords:"youtube video downloader, download youtube video, youtube to mp4, youtube downloader free, youtube shorts downloader, 4k youtube",
+    icon:"▶️", grad:"linear-gradient(135deg,#ff0000,#c4302b)",
+    acc:"#fca5a5", focusC:"rgba(255,0,0,0.4)", focusS:"rgba(255,0,0,0.08)",
+    badgeBg:"rgba(255,0,0,0.1)", c1:"rgba(255,0,0,0.08)", c2:"rgba(196,48,43,0.05)",
+    subtitle:"Download YouTube videos and Shorts in HD, Full HD and 4K for free. No account needed — paste the YouTube link and save.",
+    placeholder:"https://www.youtube.com/watch?v=...",
+    fieldSub:"Only accepts YouTube links — videos, Shorts and youtu.be links",
+    chips:["✅ Free","🎬 Videos","📱 Shorts","4K Quality","⚡ HD","🔒 No Login"],
+    steps:[["Open YouTube","and find the video or Short you want."],["Tap Share","and select Copy Link."],["Paste the link","in the box above and tap Download."],["Choose quality","up to 4K and save to your device."]],
+    feats:[["🎯","Up to 4K","HD, Full HD or 4K quality."],["📱","Shorts Supported","YouTube Shorts fully supported."],["⚡","Fast","High speed, no queue."],["🔒","No Account","No Google login required."]],
+    faqs:[["Can I download Shorts?","Yes! YouTube Shorts are fully supported."],["Max quality?","Up to 4K depending on the original video."],["Is it free?","100% free, no limits."],["Do I need Google account?","No account needed at any point."]],
   },
   twitter: {
-    path: "/twitter", platform: "X (Twitter)",
-    title: "X (Twitter) Video Downloader — Download X Videos & GIFs Free | SocialSave",
-    desc: "Download X (Twitter) videos and GIFs for free in HD quality. No login required. Save any X or Twitter video by pasting the post link.",
-    keywords: "twitter video downloader, x video downloader, download twitter video, download x video, twitter gif downloader, x video free",
-    icon: `<svg viewBox="0 0 24 24" width="28" height="28" fill="white"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.63 5.905-5.63zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>`,
-    grad: "linear-gradient(135deg,#000000,#1a1a1a)",
-    acc: "#e2e8f0", focusC: "rgba(255,255,255,0.2)", focusS: "rgba(255,255,255,0.04)",
-    badgeBg: "rgba(255,255,255,0.08)", c1: "rgba(255,255,255,0.04)", c2: "rgba(255,255,255,0.02)",
-    subtitle: "Download X and Twitter videos and GIFs in HD for free. No account needed — paste any X or Twitter post link and save.",
-    placeholder: "https://x.com/user/status/...",
-    fieldSub: "Works with x.com and twitter.com post links",
-    chips: ["✅ Free","📹 X Videos","🎞 GIFs","⚡ HD","🔒 No Login"],
-    steps: [["Open X (Twitter)","and find the post with the video or GIF."],["Tap Share","and select Copy Link."],["Paste the link","in the box above and tap Download."],["Save the video","GIFs save as clean MP4 files."]],
-    feats: [["📹","Videos & GIFs","Both X videos and GIFs supported."],["⚡","Instant","Ready to download in seconds."],["🎯","HD Quality","Highest available quality."],["📱","All Devices","Works on any browser."]],
-    faqs: [["Can I download X GIFs?","Yes! GIFs download as MP4 video files."],["x.com and twitter.com both work?","Yes, both URL formats are fully supported."],["Is it free?","Completely free, no sign-up needed."],["Private accounts?","Only public X accounts can be downloaded."]],
+    key:"twitter", path:"/twitter", platform:"X (Twitter)",
+    title:"X (Twitter) Video Downloader — Download X Videos & GIFs Free | SocialSave",
+    desc:"Download X (Twitter) videos and GIFs for free in HD quality. No login required. Save any X or Twitter video by pasting the post link.",
+    keywords:"twitter video downloader, x video downloader, download twitter video, download x video, twitter gif downloader, x video free",
+    icon:`<svg viewBox="0 0 24 24" width="28" height="28" fill="white"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.63 5.905-5.63zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>`,
+    grad:"linear-gradient(135deg,#000000,#1a1a1a)",
+    acc:"#e2e8f0", focusC:"rgba(255,255,255,0.2)", focusS:"rgba(255,255,255,0.04)",
+    badgeBg:"rgba(255,255,255,0.08)", c1:"rgba(255,255,255,0.04)", c2:"rgba(255,255,255,0.02)",
+    subtitle:"Download X and Twitter videos and GIFs in HD for free. No account needed — paste any X or Twitter post link and save.",
+    placeholder:"https://x.com/user/status/...",
+    fieldSub:"Only accepts X (Twitter) links — x.com and twitter.com",
+    chips:["✅ Free","📹 X Videos","🎞 GIFs","⚡ HD","🔒 No Login"],
+    steps:[["Open X (Twitter)","and find the post with the video or GIF."],["Tap Share","and select Copy Link."],["Paste the link","in the box above and tap Download."],["Save the video","GIFs save as clean MP4 files."]],
+    feats:[["📹","Videos & GIFs","Both X videos and GIFs supported."],["⚡","Instant","Ready to download in seconds."],["🎯","HD Quality","Highest available quality."],["📱","All Devices","Works on any browser."]],
+    faqs:[["Can I download X GIFs?","Yes! GIFs download as MP4 video files."],["x.com and twitter.com both work?","Yes, both URL formats are fully supported."],["Is it free?","Completely free, no sign-up needed."],["Private accounts?","Only public X accounts can be downloaded."]],
   },
 };
 
@@ -453,10 +497,9 @@ ${SHARED_CSS}
 .wd{font-size:12px;color:var(--muted);line-height:1.5;}
 </style>
 </head>
-<body>
+<body data-platform="home">
 <div class="bg"></div>
 <div class="wrap" style="max-width:900px">
-
   <div class="hero">
     <div class="logo-wrap">
       <div class="logo-icon">⬇</div>
@@ -523,31 +566,36 @@ ${SHARED_CSS}
 </div>
 
 <script>
-const PC={instagram:{s:'background:rgba(225,48,108,0.12);color:#e1306c;border:1px solid rgba(225,48,108,0.25)',i:'📸',n:'Instagram'},tiktok:{s:'background:rgba(105,201,208,0.12);color:#69c9d0;border:1px solid rgba(105,201,208,0.25)',i:'🎵',n:'TikTok'},facebook:{s:'background:rgba(24,119,242,0.12);color:#1877f2;border:1px solid rgba(24,119,242,0.25)',i:'📘',n:'Facebook'},pinterest:{s:'background:rgba(230,0,35,0.12);color:#e60023;border:1px solid rgba(230,0,35,0.25)',i:'📌',n:'Pinterest'},youtube:{s:'background:rgba(255,0,0,0.12);color:#ff0000;border:1px solid rgba(255,0,0,0.25)',i:'▶️',n:'YouTube'},twitter:{s:'background:rgba(255,255,255,0.08);color:#aaa;border:1px solid rgba(255,255,255,0.15)',i:'✖',n:'X (Twitter)'}};
+const PC={
+  instagram:{s:'background:rgba(225,48,108,0.12);color:#e1306c;border:1px solid rgba(225,48,108,0.25)',i:'📸',n:'Instagram'},
+  tiktok:{s:'background:rgba(105,201,208,0.12);color:#69c9d0;border:1px solid rgba(105,201,208,0.25)',i:'🎵',n:'TikTok'},
+  facebook:{s:'background:rgba(24,119,242,0.12);color:#1877f2;border:1px solid rgba(24,119,242,0.25)',i:'📘',n:'Facebook'},
+  pinterest:{s:'background:rgba(230,0,35,0.12);color:#e60023;border:1px solid rgba(230,0,35,0.25)',i:'📌',n:'Pinterest'},
+  youtube:{s:'background:rgba(255,0,0,0.12);color:#ff0000;border:1px solid rgba(255,0,0,0.25)',i:'▶️',n:'YouTube'},
+  twitter:{s:'background:rgba(255,255,255,0.08);color:#aaa;border:1px solid rgba(255,255,255,0.15)',i:'✖',n:'X (Twitter)'},
+};
 let CUR_URL='';
-document.addEventListener('DOMContentLoaded',()=>{
-  document.getElementById('url').addEventListener('keydown',e=>{if(e.key==='Enter')doFetch();});
-  document.getElementById('url').addEventListener('input',async()=>{
-    const v=document.getElementById('url').value.trim();
-    document.getElementById('drow').innerHTML='';
-    if(v.length<10)return;
-    try{const r=await fetch('/api/detect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:v})});const d=await r.json();if(d.platform){const c=PC[d.platform];document.getElementById('drow').innerHTML='<span class="dpill" style="'+c.s+'">'+c.i+' '+c.n+' detected</span>';}}catch{}
-  });
-  document.getElementById('url').addEventListener('focus',async()=>{try{const t=await navigator.clipboard.readText();const inp=document.getElementById('url');if(!inp.value&&t.startsWith('http'))inp.value=t;}catch{}});
-});
+
 function setLoad(on){document.querySelector('.loader').classList.toggle('on',on);document.querySelector('.btn').disabled=on;}
 function showErr(m){const e=document.querySelector('.err');e.textContent='⚠ '+m;e.classList.add('on');}
 function clearErr(){document.querySelector('.err').classList.remove('on');}
 function fmtB(b){if(!b)return'';return b>1048576?(b/1048576).toFixed(1)+' MB':(b/1024).toFixed(0)+' KB';}
 function fmtD(s){if(!s)return'';return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+
 async function doFetch(){
   const url=document.getElementById('url').value.trim();
   if(!url)return showErr('Please paste a video link first.');
-  clearErr();document.querySelector('.result').classList.remove('on');
+  clearErr();
+  document.querySelector('.result').classList.remove('on');
   CUR_URL=url;setLoad(true);
-  try{const r=await fetch('/api/info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});const d=await r.json();setLoad(false);if(!r.ok)return showErr(d.error||'Could not get video. Make sure the post is public.');renderResult(d);}
-  catch{setLoad(false);showErr('Connection error. Please try again.');}
+  try{
+    const r=await fetch('/api/info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const d=await r.json();setLoad(false);
+    if(!r.ok)return showErr(d.error||'Could not get video. Make sure the post is public.');
+    renderResult(d);
+  }catch{setLoad(false);showErr('Connection error. Please try again.');}
 }
+
 function renderResult(d){
   const tw=document.getElementById('tw');
   if(d.thumbnail){document.getElementById('timg').src=d.thumbnail;tw.style.display='';}else tw.style.display='none';
@@ -556,15 +604,39 @@ function renderResult(d){
   document.getElementById('vstats').innerHTML=st.map(s=>'<span>'+s+'</span>').join('');
   const list=document.getElementById('fmts');list.innerHTML='';
   const fmts=d.formats&&d.formats.length?d.formats:[{format_id:'best',quality:'Best Quality',ext:'mp4',filesize:null,height:0}];
-  fmts.forEach((f,i)=>{const lbl=f.height?f.height+'p':(f.quality||'Best');const sz=fmtB(f.filesize);const p=new URLSearchParams({url:CUR_URL,format_id:f.format_id,filename:(d.platform||'video')+'_'+lbl});const row=document.createElement('div');row.className='frow';row.innerHTML='<div class="finfo"><span class="fbadge">'+((f.ext||'mp4').toUpperCase())+'</span><div><div class="fq">'+lbl+(i===0?' ⭐':'')+'</div>'+(sz?'<div class="fs">'+sz+'</div>':'')+'</div></div><a class="dl-btn" href="/api/download?'+p+'" download>↓ Save</a>';list.appendChild(row);});
+  fmts.forEach((f,i)=>{
+    const lbl=f.height?f.height+'p':(f.quality||'Best');
+    const sz=fmtB(f.filesize);
+    const p=new URLSearchParams({url:CUR_URL,format_id:f.format_id,filename:(d.platform||'video')+'_'+lbl});
+    const row=document.createElement('div');row.className='frow';
+    row.innerHTML='<div class="finfo"><span class="fbadge">'+((f.ext||'mp4').toUpperCase())+'</span><div><div class="fq">'+lbl+(i===0?' ⭐':'')+'</div>'+(sz?'<div class="fs">'+sz+'</div>':'')+'</div></div><a class="dl-btn" href="/api/download?'+p+'" download>↓ Save</a>';
+    list.appendChild(row);
+  });
   document.querySelector('.result').classList.add('on');
 }
+
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('url').addEventListener('keydown',e=>{if(e.key==='Enter')doFetch();});
+  document.getElementById('url').addEventListener('input',async()=>{
+    const v=document.getElementById('url').value.trim();
+    document.getElementById('drow').innerHTML='';
+    if(v.length<10)return;
+    try{
+      const r=await fetch('/api/detect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:v})});
+      const d=await r.json();
+      if(d.platform){const c=PC[d.platform];document.getElementById('drow').innerHTML='<span class="dpill" style="'+c.s+'">'+c.i+' '+c.n+' detected</span>';}
+    }catch{}
+  });
+  document.getElementById('url').addEventListener('focus',async()=>{
+    try{const t=await navigator.clipboard.readText();const inp=document.getElementById('url');if(!inp.value&&t.startsWith('http'))inp.value=t;}catch{}
+  });
+});
 </script>
 </body>
 </html>`;
 
 // ═══════════════════════════════════════════════════════════════
-// ROUTES — All pages served from one file
+// ROUTES
 // ═══════════════════════════════════════════════════════════════
 app.get("/", (req, res) => res.send(HOME_HTML));
 
@@ -596,7 +668,7 @@ app.post("/api/info", async (req, res) => {
 
   console.log(`[${platform}] ${finalUrl}`);
 
-  const args = ["--dump-json", "--no-playlist", "--no-warnings", "--no-check-certificates", finalUrl];
+  const args = ["--dump-json","--no-playlist","--no-warnings","--no-check-certificates", finalUrl];
   let stdout = "", stderr = "";
   const proc = spawn("yt-dlp", args);
   proc.stdout.on("data", d => stdout += d.toString());
@@ -614,12 +686,12 @@ app.post("/api/info", async (req, res) => {
 
       const allFmts = (info.formats || [])
         .filter(f => f.vcodec && f.vcodec !== "none" && f.ext !== "mhtml")
-        .map(f => ({ format_id: f.format_id, ext: f.ext || "mp4", quality: f.height ? `${f.height}p` : (f.format_note || f.format_id), height: f.height || 0, filesize: f.filesize || f.filesize_approx || null }))
+        .map(f => ({ format_id: f.format_id, ext: f.ext||"mp4", quality: f.height?`${f.height}p`:(f.format_note||f.format_id), height: f.height||0, filesize: f.filesize||f.filesize_approx||null }))
         .sort((a, b) => b.height - a.height);
 
       const seen = new Set();
-      const unique = allFmts.filter(f => { const k = `${f.height}-${f.ext}`; if (seen.has(k)) return false; seen.add(k); return true; });
-      const formats = unique.length ? unique.slice(0, 8) : [{ format_id: "best", ext: "mp4", quality: "Best Quality", height: 0, filesize: null }];
+      const unique = allFmts.filter(f => { const k=`${f.height}-${f.ext}`; if(seen.has(k))return false; seen.add(k); return true; });
+      const formats = unique.length ? unique.slice(0,8) : [{format_id:"best",ext:"mp4",quality:"Best Quality",height:0,filesize:null}];
 
       res.json({
         platform, platform_name: PLATFORMS[platform].name,
@@ -647,7 +719,7 @@ app.get("/api/download", (req, res) => {
   const finalUrl = cleanUrl(url);
   if (!finalUrl) return res.status(400).json({ error: "Invalid URL." });
 
-  const safeName = (filename || `${platform}_video`).replace(/[^a-z0-9_\-]/gi, "_") + ".mp4";
+  const safeName = (filename||`${platform}_video`).replace(/[^a-z0-9_\-]/gi,"_")+".mp4";
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
   res.setHeader("Content-Type", "video/mp4");
 
@@ -663,7 +735,7 @@ app.get("/api/download", (req, res) => {
 
 app.get("/api/health", async (req, res) => {
   const v = await checkYtDlp();
-  res.json({ status: "ok", ytdlp: v || "not installed", platforms: Object.keys(PLATFORMS) });
+  res.json({ status:"ok", ytdlp: v||"not installed", platforms: Object.keys(PLATFORMS) });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -671,5 +743,5 @@ app.get("/api/health", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
   console.log(`\n🚀 SocialSave running → http://localhost:${PORT}`);
-  console.log(`📄 Single file — no separate HTML needed\n`);
+  console.log(`✅ Per-page platform validation enabled\n`);
 });
