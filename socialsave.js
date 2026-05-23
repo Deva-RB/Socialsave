@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-app.use(rateLimit({ windowMs: 60000, max: 30, message: { error: "Too many requests. Please wait." } }));
+app.use(rateLimit({ windowMs: 60000, max: 100, message: { error: "Too many requests. Please wait." } }));
 
 // ═══════════════════════════════════════════════════════════════
 // PLATFORM DEFINITIONS
